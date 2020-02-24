@@ -1,0 +1,205 @@
+---
+title: "HH612 to Submit Proj1"
+output:
+  html_notebook:default
+---
+```{r}
+library(kableExtra)  ##kable
+library(ModelMetrics)  ##rsme calculation
+library(data.table)
+library(dplyr)
+library(tidyr)
+library(tidyverse)
+library(caTools)  ## sergio split data
+```
+
+# Purpose-Global Baseline Predictors and RMSE 
+In this first assignment, we’ll attempt to predict ratings with very little information.  We’ll first look at just raw averages across all (training dataset) users.  We’ll then account for “bias” by normalizing across users and across items.   You’ll be working with ratings in a user-item matrix, where each rating may be (1) assigned to a training dataset, (2) assigned to a test dataset, or (3) missing. 
+
+
+The following is an implementation of the Baseline Predictor for a Recommender System that recommends movies. This system is meant to demonstrate the usage of baseline predictors that compute biases for each user and item. The data set used is from *grouplens.org*.
+
+# Dataset
+The movie lense project was used.  The data used are extracted from the file *ml-latest-small.zip* downloaded from (http://grouplens.org/datasets/movielens/latest). 
+We start by examining summaries and the first few records of the dataframes corresponding to the movies and their ratings.
+
+```{r LoadData}
+getwd()
+moviefile = "C://Users//graci//Documents//ml-latest-small//movies.csv"
+ratingsfile = "C://Users//graci//Documents//ml-latest-small//ratings.csv"
+
+movies = read.csv(moviefile) ##9742 *3
+ratings = read.csv(ratingsfile)  ##100836*4
+head(movies,5)
+head(ratings,4)
+```
+For the purpose of this analysis, we reduced the rows to 200
+```{r ReduceSize}
+summary(movies)
+
+# Reduce the size of the data set for this assignment.
+set.seed(123)
+reduced = sample.int(nrow(ratings), 200, replace = F) ##int 
+ratings = ratings[reduced,] ##  4
+head(ratings)
+summary(ratings)
+
+# we can calculate the number of unique users as follows.
+print(length(unique(ratings$userId))) ## unique users
+print(length(unique(ratings$movieId)))
+print(length(unique(ratings$rating)))
+print(unique(ratings$rating))
+```
+
+# User-Item Matrix
+A user-item matrix is created, where each row represents a user and each column a movie (item). 
+The element for a given row and column represents the rating given by the user to the movie.
+The data is converted from long to wide format.
+
+```{r UserItemMatrix}
+ratings2 = dplyr::select(ratings, -timestamp)  ## 3VR now, userID, movieID, rating
+head(ratings2,2)
+
+## to spread, or pivoting, 
+ui_GH = spread(ratings2, movieId, rating) 
+head(ui_GH,2)  
+dim(ui_GH)
+
+ui2_GH = as.matrix(dplyr::select(ui_GH, -userId))  
+table(is.na(ui2_GH))
+```
+## Train / Test Subdata Splits
+- Search for the element in the User-Item Matrix that matches the given userId, movieId, and
+    - set its value to NA for the train matrix
+    - set its value to the actual value for the test matrix  (not NA, !NA)
+
+```{r SplitData}
+# Randomly split all ratings for training and testing sets
+
+split_data <- ratings2
+set.seed(50)
+split <- sample.split(split_data$rating, SplitRatio = 0.75)
+
+# Prepare training set
+train_data <- split_data
+train_data$rating[!split] <- NA  ## this Rating col is diff from rating col
+print("Training Dataset")
+head(train_data,20)  ###  3VR
+
+# Prepare testing set
+test_data <- split_data
+test_data$rating[split] <- NA ##  *3 VR
+print("Test Dataset")    
+head(test_data,20)
+## aboveL train_data and test_data are mirror image of each other, same amount of obs
+```
+## Global Raw Rating for Entire Data 
+```{r RawRating1}
+raw.rating = sum(ratings$rating, na.rm=TRUE) / nrow(ratings)
+
+print(raw.rating)
+```
+### RMSE for the raw average
+```{r RMSE3}
+library(ModelMetrics)
+test_ratings_tmp$raw.rating = raw.rating
+
+rmse(test_ratings_tmp$raw.rating, test_ratings_tmp$rating)
+```
+#### Global Raw Rating for Training Data / Test Data
+```{r RMSE_raw2}
+raw.rating.2 = sum(train_data$rating, na.rm=TRUE) / length(which(!is.na(train_data$rating)))
+print(raw.rating.2)
+
+mov_raw_avg <- round(mean(as.matrix(train_data$rating), na.rm = TRUE),4) 
+mov_raw_avg  
+raw_avg <- sum(train_data$rating, na.rm = TRUE) / length(which(!is.na(train_data$rating)))
+
+# validating raw average #
+print (sum(as.matrix(train_data$rating), na.rm = TRUE) / sum(!is.na(train_data$rating)) ) 
+
+# # RMSE - Test,
+ test_ratings_tmp <- subset (test_data, !is.na(test_data[,3]) ) ##3rd col is ratings, 
+ test_ratings <- test_ratings_tmp [,3]##3rd col is ratings, 
+  
+rsq_diff <- c() 
+for (i in test_ratings){  
+  rsq_diff[length(rsq_diff)+1] <- (i-mov_raw_avg)^2
+  }
+rmse_raw_test <- sqrt(mean(rsq_diff, na.rm = TRUE))  
+rmse_raw_test   
+```
+# Reviewers and Movie Biases
+```{r Bias}
+
+Reviewers_bias <- train_data %>% 
+  filter(!is.na(rating)) %>% 
+  group_by(userId) %>%
+  summarise(sum = sum(rating), count = n()) %>% 
+  mutate(bias = sum/count-raw_avg) %>% ## no more movieId
+ 
+  select(userId, ReviewersBias = bias)
+ReviewersBias<-Reviewers_bias$ReviewersBias
+
+Movie_bias <- train_data %>% 
+  filter(!is.na(rating)) %>% 
+  group_by(movieId) %>%
+  summarise(sum = sum(rating), count = n()) %>% 
+  mutate(bias = sum/count-raw_avg) %>%
+  select(movieId, MovieBias = bias)
+MovieBias<-Movie_bias$MovieBias
+
+train_data2 <- train_data %>% 
+  left_join(Reviewers_bias, by = "userId") %>%  ##2 Reviewers Bias
+  left_join(Movie_bias, by = "movieId") %>%  ##  train_data, 32 MovieBias
+  mutate(RawAvg = raw_avg) %>%
+  mutate(Baseline = RawAvg + ReviewersBias + MovieBias)
+head(train_data2, 4)  ## * 7vr
+
+test_data2 <- test_data %>% 
+  left_join(Reviewers_bias, by = "userId") %>%
+  left_join(Movie_bias, by = "movieId") %>%   ## 
+  mutate(RawAvg = raw_avg) %>%
+  mutate(Baseline = RawAvg + ReviewersBias + MovieBias)
+ head(test_data2,2)    ## 7VR
+```
+``````{r RSME7}
+rmse_base_train <- sqrt(sum((train_data2$rating[!is.na(train_data2$rating)] - 
+                               train_data2$Baseline[!is.na(train_data2$rating)])^2) /
+                           length(which(!is.na(train_data2$rating))))
+
+rmse_base_test <- sqrt(sum((test_data2$rating[!is.na(test_data2$rating)] - 
+                              test_data2$Baseline[!is.na(test_data2$rating)])^2) /
+                         length(which(!is.na(test_data2$rating))))
+
+print(rmse_base_train)  ##0.9112
+print(rmse_base_test)## NA
+```
+
+```{r eval1}
+UserBias <- function(uid, df) {
+  ss = df[which(df$userId == uid),]
+  ub = sum(ss$rating)/nrow(ss)
+  return(ub)
+}
+
+ItemBias <- function(mid, df) {
+  ss = df[which(df$movieId == mid),]
+  ib = sum(ss$rating)/nrow(ss)
+  return(ib)
+}
+```
+
+# RMSE for Baseline Predictor
+```{r BaselinePred}
+# not working,
+test_data$Baseline2 = 0.0
+
+for (ii in 1:nrow(test_data)) {
+  test_data[ii,]$Baseline2 = test_data2[ii,]$raw.rating +
+                           UserBias(test_data[ii,]$userId, ratings2) - raw.rating +
+                           ItemBias(test_data[ii,]$movieId, ratings2) - raw.rating
+}
+
+ rmse(test_data2$Baseline2, test_data$rating) #ERROR
+```
